@@ -1,88 +1,160 @@
-name: build
+name: Test Build
 
 on:
   push:
     branches:
       - master
-      - dev
+    paths:
+      - '**'
+      - '!**/assets/**'
+      - '!**.md'
+      - '!**/ISSUE_TEMPLATE/**'
+  pull_request:
+  workflow_dispatch:
 
 jobs:
-  build:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.set-ver.outputs.version }}
+      versionL: ${{ steps.set-ver.outputs.versionL }}
+      lanzou: ${{ steps.check.outputs.lanzou }}
+      telegram: ${{ steps.check.outputs.telegram }}
     steps:
-      - uses: actions/checkout@v2
-      # 获取打包秘钥
-      - name: Checkout Android Keystore
-        uses: actions/checkout@v2
-        with:
-          repository: bysqh/Key
-          token: ${{ secrets.KEY_TOKEN }} # 连接仓库的token,需要单独配置
-          path: ${{ github.workspace }}/apk/*.apk # 仓库的根目录名
-      # 读取配置
-      - name: Prepare Config
-        id: config
+      - id: set-ver
         run: |
-          echo "读取配置"
-          source ${{ github.workspace }}/app/version_code.properties
-          version=$VERSION_CODE
-          versionN=v${version:0:1}.${version:1:1}.${version:2:1}
-          echo ::set-output name=need_create_release::"$CREATE_RELEASE"
-          echo ::set-output name=version_name::"$versionN"
-          echo need_create_release=$CREATE_RELEASE
-          echo version_name=$versionN
-          if [ $CREATE_RELEASE == 'true' -a ${{ github.ref }} == 'refs/heads/master' ];then
-             echo ::set-output name=lanzou_folder_id::"1608604"
-             echo ::set-output name=lanzou_share_url::"https://fycz.lanzoui.com/b00ngso7e"
-          else
-             echo ::set-output name=lanzou_folder_id::"2226473"
-             echo ::set-output name=lanzou_share_url::"https://fycz.lanzoui.com/b00nu1f8d"
+          echo "version=$(date -d "8 hour" -u +3.%y.%m%d%H)" >> $GITHUB_OUTPUT
+          echo "versionL=$(date -d "8 hour" -u +3.%y.%m%d%H%M)" >> $GITHUB_OUTPUT
+      - id: check
+        run: |
+          if [ ${{ secrets.LANZOU_ID }} ]; then
+            echo "lanzou=yes" >> $GITHUB_OUTPUT
           fi
-      # 编译打包
+          if [ ${{ secrets.BOT_TOKEN }} ]; then
+            echo "telegram=yes" >> $GITHUB_OUTPUT
+          fi
+  build:
+    needs: prepare
+    strategy:
+      matrix:
+        product: [ app ]
+        type: [ release ]
+      fail-fast: false
+    runs-on: ubuntu-latest
+    env:
+      product: ${{ matrix.product }}
+      type: ${{ matrix.type }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSIONL: ${{ needs.prepare.outputs.versionL }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Clear 18PlusList.txt
+        run: |
+          echo "清空18PlusList.txt"
+          echo "">$GITHUB_WORKSPACE/app/src/main/assets/18PlusList.txt
+      - name: Release Apk Sign
+        run: |
+          echo "给apk增加签名"
+          cp $GITHUB_WORKSPACE/.github/workflows/legado.jks $GITHUB_WORKSPACE/app/legado.jks
+          sed '$a\RELEASE_STORE_FILE=./legado.jks'          $GITHUB_WORKSPACE/gradle.properties -i
+          sed '$a\RELEASE_KEY_ALIAS=legado'                 $GITHUB_WORKSPACE/gradle.properties -i
+          sed '$a\RELEASE_STORE_PASSWORD=gedoor_legado'     $GITHUB_WORKSPACE/gradle.properties -i
+          sed '$a\RELEASE_KEY_PASSWORD=gedoor_legado'       $GITHUB_WORKSPACE/gradle.properties -i
+      - name: Set up Gradle
+        uses: gradle/gradle-build-action@v2
+
       - name: Build With Gradle
         run: |
-          echo "开始编译打包"
-          chmod +x gradlew
-          if [[ ${{ steps.config.outputs.need_create_release }} == 'true' ]];then
-             echo "进行release构建"
-             ./gradlew assembleRelease --parallel
+          if [ ${{ env.type }} == 'release' ]; then
+            typeName="原包名"
           else
-             echo "进行Debug构建"
-             ./gradlew assembleDebug --parallel
+            typeName="共存"
+            sed "s/'.release'/'.releaseA'/" $GITHUB_WORKSPACE/app/build.gradle  -i
+            sed 's/.release/.releaseA/'     $GITHUB_WORKSPACE/app/google-services.json -i
           fi
-      - name: Get File Path
-        id: get_path
-        run: |
-          path="$GITHUB_WORKSPACE/app/build/outputs/apk/release"
-          if [[ ${{ steps.config.outputs.need_create_release }} != 'true' ]];then
-            path="$GITHUB_WORKSPACE/app/build/outputs/apk/debug"
-          fi
-          echo ::set-output name=file_path::"$path"
-      - name: Upload Lanzou
-        run: |
-          echo "上传APP至蓝奏云"
-          tag_name=${{ steps.config.outputs.version_name }}
-          if [ ${{ steps.config.outputs.need_create_release }} != 'true' -o ${{ github.ref }} != 'refs/heads/master' ];then
-            gitHead=$(git rev-parse --short HEAD)
-            tag_name=${{ steps.config.outputs.version_name }}-$gitHead
-          fi
-          python3 $GITHUB_WORKSPACE/keystore/scripts/lzy.py "${{ steps.get_path.outputs.file_path }}" "${{ steps.config.outputs.lanzou_folder_id }}" "$tag_name"
-      # 发布正式版
-      - name: Release
-        if: ${{ steps.config.outputs.need_create_release == 'true' && github.ref == 'refs/heads/master' }}
-        uses: softprops/action-gh-release@v1
-        with:
-          body_path: ./app/release.md
-          prerelease: false
-          draft: false
-          tag_name: ${{ steps.config.outputs.version_name }}
-          name: FYReader_${{ steps.config.outputs.version_name }}
-          files: |
-            ${{ steps.get_path.outputs.file_path }}/风月读书${{ steps.config.outputs.version_name }}.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # 上传Artifact
-      - name: Upload Artifact
+          echo "统一版本号"
+          sed "/def version/c def version = \"${{ env.VERSION }}\"" $GITHUB_WORKSPACE/app/build.gradle  -i
+          echo "开始${{ env.product }}$typeName构建"
+          chmod +x gradlew
+          ./gradlew assemble${{ env.product }}release --build-cache --parallel --daemon --warning-mode all
+          echo "修改文件名"
+          mkdir -p ${{ github.workspace }}/apk/
+          for file in `ls ${{ github.workspace }}/app/build/outputs/apk/*/*/*.apk`; do
+            mv "$file" ${{ github.workspace }}/apk/legado_${{ env.product }}_${{ env.VERSIONL }}_$typeName.apk
+          done
+      - name: Upload App To Artifact
         uses: actions/upload-artifact@v3
         with:
-          name: app
-          path: ${{ steps.get_path.outputs.file_path }}/风月读书${{ steps.config.outputs.version_name }}.apk
+          name: reader.${{ env.product }}.${{ env.type }}
+          path: ${{ github.workspace }}/apk/*.apk
+
+  lanzou:
+    needs: [ prepare, build ]
+    if: ${{ github.event_name != 'pull_request' && needs.prepare.outputs.lanzou == 'yes' }}
+    runs-on: ubuntu-latest
+    env:
+      # 登录蓝奏云后在控制台运行document.cookie
+      ylogin: ${{ secrets.LANZOU_ID }}
+      phpdisk_info: ${{ secrets.LANZOU_PSD }}
+      # 蓝奏云里的文件夹ID（阅读3测试版:2670621）
+      LANZOU_FOLDER_ID: '2670621'
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with:
+          path: apk/
+      - working-directory: apk/
+        run: mv */*.apk . ;rm -rf */
+      - name: Upload To Lanzou
+        continue-on-error: true
+        run: |
+          path="$GITHUB_WORKSPACE/apk/"
+          python3 $GITHUB_WORKSPACE/.github/scripts/lzy_web.py "$path" "$LANZOU_FOLDER_ID"
+          echo "[$(date -u -d '+8 hour' '+%Y.%m.%d %H:%M:%S')] 分享链接: https://kunfei.lanzoux.com/b0f810h4b"
+  test_Branch:
+    needs: [ prepare, build ]
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' && github.actor == 'gedoor' }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with:
+          path: apk/
+      - working-directory: apk/
+        run: mv */*.apk . ;rm -rf */
+      - name: Push To "test" Branch
+        run: |
+          cd $GITHUB_WORKSPACE/apk/
+          git init
+          git checkout -b test
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://${{ github.actor }}:${{ secrets.ACTIONS_TOKEN }}@github.com/${{ github.actor }}/release"
+          git add *.apk
+          git commit -m "${{ needs.prepare.outputs.versionL }}"
+          git push -f -u origin test
+  telegram:
+    needs: [ prepare, build ]
+    if: ${{ github.event_name != 'pull_request' && needs.prepare.outputs.telegram == 'yes' }}
+    runs-on: ubuntu-latest
+    env:
+      CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with:
+          path: apk/
+      - working-directory: apk/
+        run: |
+          for file in `ls */*.apk`; do
+            mv "$file" "$(echo "$file"|sed -e 's#.*\/##g' -e "s/_/ /g" -e 's/legado/阅读/')"
+          done
+          rm -rf */
+      - name: Post to channel
+        run: |
+          pip install pyTelegramBotAPI
+          path="$GITHUB_WORKSPACE/apk/"
+          python3 $GITHUB_WORKSPACE/.github/scripts/tg_bot.py "$BOT_TOKEN" "$CHANNEL_ID" "$path"
