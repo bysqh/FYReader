@@ -26,13 +26,10 @@ jobs:
           source ${{ github.workspace }}/app/version_code.properties
           version=$VERSION_CODE
           versionN=v${version:0:1}.${version:1:1}.${version:2:1}
-
           echo ::set-output name=need_create_release::"$CREATE_RELEASE"
           echo ::set-output name=version_name::"$versionN"
-
           echo need_create_release=$CREATE_RELEASE
           echo version_name=$versionN
-
           if [ $CREATE_RELEASE == 'true' -a ${{ github.ref }} == 'refs/heads/master' ];then
              echo ::set-output name=lanzou_folder_id::"1608604"
              echo ::set-output name=lanzou_share_url::"https://fycz.lanzoui.com/b00ngso7e"
@@ -64,11 +61,11 @@ jobs:
         run: |
           echo "上传APP至蓝奏云"
           tag_name=${{ steps.config.outputs.version_name }}
-          if [ ${{ steps.config.outputs.need_create_release }} != 'true' -a ${{ github.ref }} != 'refs/heads/master' ];then
+          if [ ${{ steps.config.outputs.need_create_release }} != 'true' -o ${{ github.ref }} != 'refs/heads/master' ];then
             gitHead=$(git rev-parse --short HEAD)
             tag_name=${{ steps.config.outputs.version_name }}-$gitHead
           fi
-          python3 $GITHUB_WORKSPACE/keystore/scripts/lzy.py "${{ steps.get_path.outputs.file_path }}/风月读书$tag_name.apk" "${{ steps.config.outputs.lanzou_folder_id }}" "$tag_name"
+          python3 $GITHUB_WORKSPACE/keystore/scripts/lzy.py "${{ steps.get_path.outputs.file_path }}" "${{ steps.config.outputs.lanzou_folder_id }}" "$tag_name"
       # 发布正式版
       - name: Release
         if: ${{ steps.config.outputs.need_create_release == 'true' && github.ref == 'refs/heads/master' }}
@@ -88,4 +85,4 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: app
-          path: ${{ steps.get_path.outputs.file_path }}/风月读书*.apk
+          path: ${{ steps.get_path.outputs.file_path }}/风月读书${{ steps.config.outputs.version_name }}.apk
