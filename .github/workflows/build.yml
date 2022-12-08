@@ -15,7 +15,7 @@ jobs:
       - name: Checkout Android Keystore
         uses: actions/checkout@v2
         with:
-          repository: bysqh/Key
+          repository: bysqh
           token: ${{ secrets.KEY_TOKEN }} # 连接仓库的token,需要单独配置
           path: keystore # 仓库的根目录名
       # 读取配置
