@@ -104,26 +104,7 @@ jobs:
             path="$GITHUB_WORKSPACE/app/build/outputs/apk/debug"
           fi
           echo ::set-output name=file_path::"$path"
-  lanzou:
-    needs: [ prepare, build ]
-    if: ${{ github.event_name != 'pull_request' && needs.prepare.outputs.lanzou == 'yes' }}
-    runs-on: ubuntu-latest
-    env:
-      # 登录蓝奏云后在控制台运行document.cookie
-      ylogin: ${{ secrets.LANZOU_ID }}
-      phpdisk_info: ${{ secrets.LANZOU_PSD }}
-      # 蓝奏云里的文件夹ID（阅读3测试版:2670621）
-      LANZOU_FOLDER_ID: '2670621'
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/download-artifact@v3
-        with:
-          path: apk/
-      - working-directory: apk/
-        run: mv */*.apk . ;rm -rf */
-      - name: Upload To Lanzou
-        continue-on-error: true
-        run: |
+  
           path="$GITHUB_WORKSPACE/apk/"
           python3 $GITHUB_WORKSPACE/.github/scripts/lzy_web.py "$path" "$LANZOU_FOLDER_ID"
           echo "[$(date -u -d '+8 hour' '+%Y.%m.%d %H:%M:%S')] 分享链接: https://kunfei.lanzoux.com/b0f810h4b"
@@ -148,34 +129,35 @@ jobs:
           git remote add origin "https://${{ github.actor }}:${{ secrets.ACTIONS_TOKEN }}@github.com/${{ github.actor }}/release"
           git add *.apk
           git commit -m "${{ needs.prepare.outputs.versionL }}"
-          git push -f -u origin test
-  telegram:
-    needs: [ prepare, build ]
-    if: ${{ github.event_name != 'pull_request' && needs.prepare.outputs.telegram == 'yes' }}
-    runs-on: ubuntu-latest
-    env:
-      CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
-      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/download-artifact@v3
+          
+      - name: Upload Lanzou
+        run: |
+          echo "上传APP至蓝奏云"
+          tag_name=${{ steps.config.outputs.version_name }}
+          if [ ${{ steps.config.outputs.need_create_release }} != 'true' -a ${{ github.ref }} != 'refs/heads/master' ];then
+            gitHead=$(git rev-parse --short HEAD)
+            tag_name=${{ steps.config.outputs.version_name }}-$gitHead
+          fi
+          python3 $GITHUB_WORKSPACE/keystore/scripts/lzy.py "${{ steps.get_path.outputs.file_path }}/风月读书$tag_name.apk" "${{ steps.config.outputs.lanzou_folder_id }}" "$tag_name"
+      # 发布正式版
+      - name: Release
+        if: ${{ steps.config.outputs.need_create_release == 'true' && github.ref == 'refs/heads/master' }}
+        uses: softprops/action-gh-release@v1
         with:
-          path: apk/
-      - working-directory: apk/
-        run: |
-          for file in `ls */*.apk`; do
-            mv "$file" "$(echo "$file"|sed -e 's#.*\/##g' -e "s/_/ /g" -e 's/legado/阅读/')"
-          done
-          rm -rf */
-      - name: Post to channel
-        run: |
-          pip install pyTelegramBotAPI
-          path="$GITHUB_WORKSPACE/apk/"
-          python3 $GITHUB_WORKSPACE/.github/scripts/tg_bot.py "$BOT_TOKEN" "$CHANNEL_ID" "$path"
-          
-          
-          
-          
-          
+          body_path: ./app/release.md
+          prerelease: false
+          draft: false
+          tag_name: ${{ steps.config.outputs.version_name }}
+          name: FYReader_${{ steps.config.outputs.version_name }}
+          files: |
+            ${{ steps.get_path.outputs.file_path }}/风月读书${{ steps.config.outputs.version_name }}.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 上传Artifact
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: app
+          path: ${{ steps.get_path.outputs.file_path }}/风月读书*.apk       
           
           
