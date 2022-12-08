@@ -1,70 +1,23 @@
-name: Test Build
+name: build
 
 on:
   push:
     branches:
       - master
-    paths:
-      - '**'
-      - '!**/assets/**'
-      - '!**.md'
-      - '!**/ISSUE_TEMPLATE/**'
-  pull_request:
-  workflow_dispatch:
+      - dev
 
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.set-ver.outputs.version }}
-      versionL: ${{ steps.set-ver.outputs.versionL }}
-      lanzou: ${{ steps.check.outputs.lanzou }}
-      telegram: ${{ steps.check.outputs.telegram }}
-    steps:
-      - id: set-ver
-        run: |
-          echo "version=$(date -d "8 hour" -u +3.%y.%m%d%H)" >> $GITHUB_OUTPUT
-          echo "versionL=$(date -d "8 hour" -u +3.%y.%m%d%H%M)" >> $GITHUB_OUTPUT
-      - id: check
-        run: |
-          if [ ${{ secrets.LANZOU_ID }} ]; then
-            echo "lanzou=yes" >> $GITHUB_OUTPUT
-          fi
-          if [ ${{ secrets.BOT_TOKEN }} ]; then
-            echo "telegram=yes" >> $GITHUB_OUTPUT
-          fi
   build:
-    needs: prepare
-    strategy:
-      matrix:
-        product: [ app ]
-        type: [ release ]
-      fail-fast: false
     runs-on: ubuntu-latest
-    env:
-      product: ${{ matrix.product }}
-      type: ${{ matrix.type }}
-      VERSION: ${{ needs.prepare.outputs.version }}
-      VERSIONL: ${{ needs.prepare.outputs.versionL }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v2
+      # 获取打包秘钥
+      - name: Checkout Android Keystore
+        uses: actions/checkout@v2
         with:
-          fetch-depth: 0
-      - name: Clear 18PlusList.txt
-        run: |
-          echo "清空18PlusList.txt"
-          echo "">$GITHUB_WORKSPACE/app/src/main/assets/18PlusList.txt
-      - name: Release Apk Sign
-        run: |
-          echo "给apk增加签名"
-          cp $GITHUB_WORKSPACE/.github/workflows/legado.jks $GITHUB_WORKSPACE/app/legado.jks
-          sed '$a\RELEASE_STORE_FILE=./legado.jks'          $GITHUB_WORKSPACE/gradle.properties -i
-          sed '$a\RELEASE_KEY_ALIAS=legado'                 $GITHUB_WORKSPACE/gradle.properties -i
-          sed '$a\RELEASE_STORE_PASSWORD=gedoor_legado'     $GITHUB_WORKSPACE/gradle.properties -i
-          sed '$a\RELEASE_KEY_PASSWORD=gedoor_legado'       $GITHUB_WORKSPACE/gradle.properties -i
-      - name: Set up Gradle
-        uses: gradle/gradle-build-action@v2
-
+          #repository: fengyuecanzhu/Key
+          #token: ${{ secrets.KEY_TOKEN }} # 连接仓库的token,需要单独配置
+          path: keystore # 仓库的根目录名
       # 读取配置
       - name: Prepare Config
         id: config
@@ -104,32 +57,6 @@ jobs:
             path="$GITHUB_WORKSPACE/app/build/outputs/apk/debug"
           fi
           echo ::set-output name=file_path::"$path"
-  
-          path="$GITHUB_WORKSPACE/apk/"
-          python3 $GITHUB_WORKSPACE/.github/scripts/lzy_web.py "$path" "$LANZOU_FOLDER_ID"
-          echo "[$(date -u -d '+8 hour' '+%Y.%m.%d %H:%M:%S')] 分享链接: https://kunfei.lanzoux.com/b0f810h4b"
-  test_Branch:
-    needs: [ prepare, build ]
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' && github.actor == 'gedoor' }}
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/download-artifact@v3
-        with:
-          path: apk/
-      - working-directory: apk/
-        run: mv */*.apk . ;rm -rf */
-      - name: Push To "test" Branch
-        run: |
-          cd $GITHUB_WORKSPACE/apk/
-          git init
-          git checkout -b test
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add origin "https://${{ github.actor }}:${{ secrets.ACTIONS_TOKEN }}@github.com/${{ github.actor }}/release"
-          git add *.apk
-          git commit -m "${{ needs.prepare.outputs.versionL }}"
-          
       - name: Upload Lanzou
         run: |
           echo "上传APP至蓝奏云"
@@ -158,6 +85,4 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: app
-          path: ${{ steps.get_path.outputs.file_path }}/风月读书*.apk       
-          
-          
+          path: ${{ steps.get_path.outputs.file_path }}/风月读书*.apk
